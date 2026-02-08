@@ -312,24 +312,45 @@ contains
 end module io_utils
 
 program open_channel_dns
-  use params, only: nsteps
-  use grid, only: init_grid
-  use field, only: allocate_fields, initialize_fields, accumulate_statistics
+  use params, only: nsteps, rk, dt
+  use grid, only: init_grid, dx, dy, dz
+  use field, only: allocate_fields, initialize_fields, accumulate_statistics, u
   use bc, only: apply_velocity_bc
   use numerics, only: compute_tentative, solve_pressure, project_velocity
   use io_utils, only: write_time_averaged_stats
+  use ieee_arithmetic
   implicit none
   integer :: step
 
+  real(rk) :: u_max, cfl
+  
   call init_grid()
   call allocate_fields()
   call initialize_fields()
   call apply_velocity_bc()
 
+  print *, "Step   Max_U      CFL"
+  flush(6)
+
   do step = 1, nsteps
     call compute_tentative()
     call solve_pressure()
     call project_velocity()
+    
+    ! Check for stability (CFL Condition)
+    u_max = maxval(abs(u))
+    cfl = u_max * dt / min(dx, min(dy, dz))
+    
+    if (mod(step, 100) == 0) then
+      print '(I5, 1x, E12.5, 1x, F8.4)', step, u_max, cfl
+      flush(6)
+    end if
+
+    if (cfl > 1.5 .or. ieee_is_nan(u_max)) then
+      print *, "FATAL ERROR: Simulation unstable (CFL > 1.5 or NaN)"
+      print *, "Step:", step, " Max U:", u_max, " CFL:", cfl
+      stop
+    end if
     
     ! Accumulate statistics starting after initial transient (e.g., step 100)
     if (step > 100) then
